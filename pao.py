@@ -1,6 +1,6 @@
 import sys
-reload(sys)  # Reload does the trick!
-sys.setdefaultencoding('utf-8')
+# reload(sys)  # Reload does the trick!
+# sys.setdefaultencoding('utf-8')
 import cmd
 import pickle
 import os.path
@@ -31,17 +31,18 @@ class PetanqueTournament(cmd.Cmd):
     ####### private functions    #####
     ##################################
     def read_csv(self, filename):
-        with open(filename, 'rb') as csvfile:
-            spamreader = csv.reader(csvfile, dialect="excel")
+        with open(filename, 'rt', encoding='utf8') as csvfile:
+            spamreader = csv.reader(csvfile)
             idx = 0
             for idx, row in enumerate(spamreader):
                 if idx > 0:
                     # loc = row[3] if row[3] == row[5] else "%s, %s" %(row[3], row[5])
-                    team = "%s & %s " % (row[2], row[6])
-                    team = unicode(team, "utf-8")
+                    team = row[2]
+                    # loc = row[6]
+                    # team = unicode(team, "utf-8")
                     group = row[1]
                     num = row[0]
-                    line = "%s %s %s" % (num, group,  team)
+                    line = "%s %s %s" % (num, group, team)
                     # print line
                     self.do_team(line)
             print("Imported ... %d teams" %idx)
@@ -90,14 +91,14 @@ class PetanqueTournament(cmd.Cmd):
 
 
     def show_rnd(self, rnd):
-        table = [self.format_team_game(k,v, rnd) for k,v in self.tournament["teams"].iteritems()]
+        table = [self.format_team_game(k,v, rnd) for k,v in self.tournament["teams"].items()]
         table.sort()
         if rnd >= 0:
             print("Round", rnd+1)
         print(tabulate(table, tablefmt="grid"))
 
     def remove_rnd(self, rnd):
-        for k,v in self.tournament["teams"].iteritems():
+        for k,v in self.tournament["teams"].items():
             if rnd == -1:
                 if len(v['games']) > 0:
                     g = v['games'][:-1]
@@ -131,7 +132,7 @@ class PetanqueTournament(cmd.Cmd):
         teams = copy.deepcopy(self.tournament["teams"])
 
         
-        for k,v in teams.iteritems():
+        for k,v in teams.items():
             oid = v["games"][rnd]
             opp = self.tournament["teams"][oid]
             crt = v["courts"][rnd]
@@ -159,7 +160,7 @@ class PetanqueTournament(cmd.Cmd):
         courts_a = []
 
         # get all courts and courts A
-        for k,v in self.tournament["court_map"].iteritems():
+        for k,v in self.tournament["court_map"].items():
             for i in range(v[0],v[1]+1):
                 if k == "a":
                     courts_a.append(i)
@@ -178,7 +179,7 @@ class PetanqueTournament(cmd.Cmd):
 
         if len(self.tournament["teams"]) % 2 == 1:
             last = sorted(self.tournament["teams"].keys())[-1]
-            args = "%d EUR BYE-%d" % (last+1, last+1)
+            args = "%d OUT BYE-%d" % (last+1, last+1)
             self.do_team(args)
 
         # get all courts and courts A
@@ -186,7 +187,7 @@ class PetanqueTournament(cmd.Cmd):
         # print "%s %s " % (courts, courts_a)
 
         teams = self.tournament["teams"]
-        for k, v in teams.iteritems():
+        for k, v in teams.items():
             team_ids.add(k)
             g = v.get("group")
             if g in groups:
@@ -340,7 +341,7 @@ class PetanqueTournament(cmd.Cmd):
     def do_zclean(self, line):
         if self.tournament_loaded():
 
-            for _, t in self.tournament["teams"].iteritems():
+            for _, t in self.tournament["teams"].items():
                 t["games"] = []
                 t["courts"] = []
                 t["played_b"] = 0
@@ -351,7 +352,7 @@ class PetanqueTournament(cmd.Cmd):
         if self.tournament_loaded():
             try:
                 if line == "" or line == "all":
-                    rnds = len(self.tournament["teams"].itervalues().next()["games"])
+                    rnds = len(self.tournament["teams"].values().next()["games"])
                     for i in range(rnds):
                         self.show_rnd(i)
                 else:
@@ -378,16 +379,21 @@ Example, > zrem 1
 
 
     def do_zexport(self, line):
+        """Prints one round of a tournament for display and scoring. Takes one parameter starting from 1.
+Usage:
+    zexport [number]
+        """
+        
         if self.tournament_loaded():
-
-            if line == "" or line == "all":
-                rnds = len(self.tournament["teams"].itervalues().next()["games"])
-                for i in range(rnds):
-                    self.export_rnd(i)
+            args = line.split(" ")
+            if len(args) != 1:
+                print("[ERROR] requires 1 paramter, a number starting from 1")
             else:
                 line = int(line) if line.isdigit() else 1
                 rnd = line -1
                 self.export_rnd(rnd)
+            
+
 
 
     def do_zmake(self, line, count=0):
@@ -435,7 +441,7 @@ Example, > zrem 1
                 courts, _  = self.court_map()
                 rnd = int(line) -1
 
-                used = [v["courts"][rnd] for _, v in self.tournament["teams"].iteritems() if len(v["courts"]) > rnd]
+                used = [v["courts"][rnd] for _, v in self.tournament["teams"].items() if len(v["courts"]) > rnd]
                 unused = set(courts) - set(used)
 
                 used2 = sorted(set(used))
@@ -452,7 +458,7 @@ Example, > zrem 1
     def do_texport(self, line):
         if self.tournament_loaded():
 
-            data = [[k, v.get("group", "-"), v.get("name", "Anonymous"), v.get("games"), v.get("courts"), v.get("played_b", False)] for k,v in self.tournament["teams"].iteritems()]
+            data = [[k, v.get("group", "-"), v.get("name", "Anonymous"), v.get("games"), v.get("courts"), v.get("played_b", False)] for k,v in self.tournament["teams"].items()]
             filename = "%s_teams_%d.csv" % (self.tournament["name"], time.time())
             self.export_csv(filename, data)
 
@@ -480,7 +486,7 @@ Example, > zrem 1
 
     def do_tlist(self, line):
         if self.tournament_loaded():
-            table = [[k, v.get("group", "-"), v.get("name", "Anonymous"), v.get("games"), v.get("courts"), v.get("played_b", 0)] for k,v in self.tournament["teams"].iteritems()]
+            table = [[k, v.get("group", "-"), v.get("name", "Anonymous"), v.get("games"), v.get("courts"), v.get("played_b", 0)] for k,v in self.tournament["teams"].items()]
             if table:
                 table.sort()
                 print(tabulate(table, tablefmt="grid"))
