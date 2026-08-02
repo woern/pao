@@ -78,7 +78,9 @@ Notes:
   when you do not need it produces a worse draw, because it stops trying to
   give teams fresh courts. It never creates a rematch either way.
 - If you have an annex field, set it too — `cset b 91 104` — so the program
-  can keep annex duty from landing on the same teams twice.
+  can keep annex duty from landing on the same teams twice. Keep the annex to
+  **at most half the size of the main field**, or later rounds become
+  impossible to draw; see the troubleshooting section of `README.md`.
 - Each `zexport` writes two files per round: the matchups for printing, and
   the blank score rows for entry.
 

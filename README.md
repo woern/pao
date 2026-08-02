@@ -258,6 +258,34 @@ all five rounds. For a **small field, give the draw spare courts** (roughly
 half again as many courts as games) or expect to fall back on `-f` in the
 later rounds.
 
+**Every round after the first fails, no matter how many times I try.**
+
+This is the one situation `-f` is genuinely required, and it is caused by an
+annex that is too big for the main field.
+
+Teams that played the annex are never drawn against each other, so each one
+needs a section `a` court of its own. If a round sends more teams to the annex
+than there are section `a` courts, the next round is impossible — not
+unlucky, impossible — and retrying will never help.
+
+The rule is:
+
+> **annex courts in use must be at most half of section `a`.**
+
+Each annex court holds 2 teams, and each of those teams needs its own main
+court next round. So 6 annex courts send 12 teams to the annex, and those 12
+teams need 12 section `a` courts.
+
+A worked failure: 20 teams (10 games) on `cset a 1 6` plus `cset b 7 20`. Six
+games fit on the main field, four spill to the annex, and those 8 annexed
+teams then need 8 main courts that do not exist. Widening the main field to
+`cset a 1 8` fixes it outright.
+
+The real tournament is nowhere near this limit — 84 main courts and 6 annex
+courts sends 12 teams to the annex against 84 main courts. But if you ever
+find yourself with a small main field and a large annex, widen the main field
+rather than reaching for `-f`.
+
 **`90 games need 90 courts, but only 50 are defined. Use cset.`**
 
 You have more games than courts. Widen section `a`, or add an annex with
@@ -310,6 +338,38 @@ For each round:
 Because step 5 and 6 commit as they go, an unlucky ordering can leave the last
 team with no legal opponent or court. That is what the retries and `-f` are
 for.
+
+---
+
+## Tests
+
+There is a test suite covering the scheduler invariants — the part that could
+otherwise produce a subtly wrong tournament without anyone noticing. It uses
+only the standard library, so it needs no setup:
+
+```
+python3 -m unittest discover
+```
+
+It runs in well under a second. Every test works in a temporary directory, so
+it will not touch your tournament files.
+
+What it guards:
+
+- no rematches, no same-group pairings, no double-booked courts, and both
+  teams' schedules always agree — checked across a sweep of field sizes and
+  random seeds, including the real 179-team / 90-court configuration
+- `-f` relaxes court history *only*, and never starts producing rematches
+- an odd team count produces exactly one `BYE`, and only one across rounds
+- annex teams are moved back to the main field the following round
+- a failed draw leaves earlier rounds untouched
+- CSV import: header skipped, BOM stripped, extra columns ignored, bad rows
+  skipped and reported, re-import preserves existing schedules
+- CSV export column layouts, which the Google Sheets workflow depends on
+- tournament files written by the 2021–2024 versions still load
+- every command has help text
+
+If you change the scheduler, run this before the tournament, not during it.
 
 ---
 
