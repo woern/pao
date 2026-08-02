@@ -12,6 +12,7 @@ dist/
 
 # Compiled Python bytecode
 *.py[cod]
+__pycache__/
 
 # Log files
 *.log
@@ -52,5 +53,9 @@ build
 dist
 *.p
 pao.spec
+
+# Tournament data and exports, but keep the documented example.
 *.csv
+!sample-teams.csv
+
 .vscode/*
