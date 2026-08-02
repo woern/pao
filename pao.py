@@ -179,12 +179,13 @@ class PetanqueTournament(cmd.Cmd):
 
         if len(self.tournament["teams"]) % 2 == 1:
             last = sorted(self.tournament["teams"].keys())[-1]
-            args = "%d OUT BYE-%d" % (last+1, last+1)
+            args = "%d EU BYE-%d" % (last+1, last+1)
             self.do_team(args)
 
         # get all courts and courts A
         courts, courts_a = self.court_map()
-        # print "%s %s " % (courts, courts_a)
+        # print("courts", courts)
+        # print("courts a", courts_a)
 
         teams = self.tournament["teams"]
         for k, v in teams.items():
@@ -270,7 +271,7 @@ class PetanqueTournament(cmd.Cmd):
                         possible_courts = list(set(courts) - (set(courts_t1) | set(courts_t2)))
 
                 random.shuffle(possible_courts)
-                # print "%s %s %s" % (t1, t2, possible_courts)
+                # print("possible courts", t1, t2, possible_courts)
 
                 c = possible_courts.pop()
                 # print "remove court", c, "in", courts 
@@ -458,7 +459,7 @@ Usage:
     def do_texport(self, line):
         if self.tournament_loaded():
 
-            data = [[k, v.get("group", "-"), v.get("name", "Anonymous"), v.get("games"), v.get("courts"), v.get("played_b", False)] for k,v in self.tournament["teams"].items()]
+            data = [[k, v.get("name", "Anonymous"), v.get("group", "-"), v.get("games"), v.get("courts"), v.get("played_b", False)] for k,v in self.tournament["teams"].items()]
             filename = "%s_teams_%d.csv" % (self.tournament["name"], time.time())
             self.export_csv(filename, data)
 
