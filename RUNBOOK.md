@@ -4,9 +4,12 @@ The step-by-step procedure for running the Amelia Island Open, from preparing
 the team list through posting the final rankings. The scheduler itself is
 documented in `README.md`; this is the process around it.
 
+Day 1 runs entirely in the web app. Day 2 still uses the Google Group
+sheets for now; the app's printed rankings replace the Results workbook.
+
 ---
 
-## 1. Prepare the master sheet
+## 1. Prepare the team list
 
 In the Google master sheet:
 
@@ -14,114 +17,73 @@ In the Google master sheet:
   accents.
 - Sanity check the names: no `/` problems, no stray blank spaces.
 
-In the **Results** workbook:
-
-- Delete the Round-X matchups and scores. The main sheet will then show `N/A`
-  everywhere — that is expected.
-
-In each **Game** sheet:
-
-- Delete the data in the `Draw` tab.
+Copy the `ForCSV` sheet (select all, copy) or export it as CSV. The first
+three columns must be **number, group, name**; anything after that is
+ignored. Bad rows are skipped and reported, so this is worth doing but not
+worth agonizing over.
 
 ---
 
-## 2. Export the team list
+## 2. Start the app
 
-1. Export the `ForCSV` sheet from Google Sheets.
-2. In Excel, convert the team numbers into **actual numbers**, not text.
-3. Remove empty rows and rows with bad data.
-4. Save it as `teams.csv` in the tournament folder.
+Double-click **Start PAO.command** in the `pao` folder (or, in a terminal,
+`python3 -m paoweb` from that folder). A terminal window and a browser
+window open; leave both open all day.
 
-The importer skips unusable rows and tells you which line numbers they were
-on, so this is worth doing but not worth agonizing over — `load` will report
-anything it could not read.
+In the browser, type a name for this year's tournament, such as
+`amelia2026`, and click **Create and open**. If the app was restarted, the
+same page lists the tournament so you can reopen it. Then:
 
----
+1. **Courts**: set the main field (for example 1 to 90) and the annex (91 to
+   104, or 0 to 0 if there is none). Keep the annex to **at most half the
+   size of the main field**, or later rounds become impossible to draw.
+2. **Teams**: paste the team list into the box, or pick the CSV file, and
+   click Import. Check the count. Re-importing is safe: it updates names and
+   groups and keeps schedules.
 
-## 3. Build the draw
-
-From the `pao` directory:
-
-```
-python3 pao.py <tournament name>
-```
-
-Then, at the prompt:
-
-```
->> cset a 1 90          set the courts you actually have
->> load teams.csv       import the teams
->> tlist                confirm the team count is right
->> texport              export the team list for the Results workbook
-
->> zmake                round 1
->> zmake                round 2
->> zmake                round 3
->> zmake                round 4
->> zmake                round 5
-
->> zexport 1
->> zexport 2
->> zexport 3
->> zexport 4
->> zexport 5
-
->> save
-```
-
-Notes:
-
-- **`zmake` takes no round number.** It always builds the next round. Earlier
-  versions of this runbook said `zmake 1 -f`; the number was silently ignored.
-- **Only add `-f` if a `zmake` fails.** If you see
-  `Could not create a round after 3 attempts`, run `zmake -f`. Using `-f`
-  when you do not need it produces a worse draw, because it stops trying to
-  give teams fresh courts. It never creates a rematch either way.
-- If you have an annex field, set it too — `cset b 91 104` — so the program
-  can keep annex duty from landing on the same teams twice. Keep the annex to
-  **at most half the size of the main field**, or later rounds become
-  impossible to draw; see the troubleshooting section of `README.md`.
-- Each `zexport` writes two files per round: the matchups for printing, and
-  the blank score rows for entry.
+Back up `<name>.p` from the `pao` directory to somewhere safe between
+rounds. It is the whole tournament.
 
 ---
 
-## 4. Day 1 in Google Sheets
+## 3. Each round
 
-Do **one game at a time** as the day goes on, in case someone arrives late or
-drops out.
+Do **one round at a time** as the day goes on, in case someone arrives late
+or drops out.
 
-### Matchups
+1. **Rounds** > **Draw round N**. If the courts are too tight to give every
+   team a fresh court, the round is still drawn and a notice lists the teams
+   that repeat a court. That never creates a rematch. If it happens often,
+   add courts.
+2. Print the **court cards** and post them. Print the **score slips** and
+   hand them to the courts if you use them.
+3. As scores come in, open **enter scores** for the round and type them in.
+   They save as you type; Enter moves to the next box. The page flags games
+   with no score, half-entered games, and tied scores.
+4. **No-show**: click the 13-7 button that points at the team that turned
+   up. A **BYE** is scored 13-7 automatically.
 
-- Copy the game matchups into the sheets labeled `GAME 1` through `GAME 5`.
-- Print the sheets that look like `g1-20 v2` for posting. You can print the
-  whole workbook, but in the second screen select **pages 1-10**.
+---
 
-### Results
+## 4. Rankings
 
-Open the **Results** workbook in Google Sheets.
+Open **Standings** at any time for the live table. Teams rank by wins,
+then point differential, then points for over points against, then the sum
+of their opponents' wins (Buchholz). Once every game of every round is
+scored, any teams still tied on all four are listed with a coin-flip form:
+flip the coin, enter the order, click Record.
 
-1. In cell `B2`, enter the number of teams **+2**. If there are 178 teams,
-   enter 180.
-2. Copy/paste from the teams export into columns `B:C`. Delete any extra junk.
-3. Go to the `Round-X` sheet and copy/paste from the score export into columns
-   `A:F`. Delete any extra junk.
-
-As scores come in, enter them into the `Round-X` sheet.
-
-**For a BYE, score it 13-7.**
+Print the **rankings** and post them to the board and to Facebook.
 
 ---
 
 ## 5. Day 2
 
-In the Results sheet from Day 1, the `Rankings` tab is auto-populated.
+Day 2 is not in the app yet. Use the printed rankings from the app and the
+Google Group sheets:
 
-1. Copy the `Rank`-`Team` columns and paste into **Final Rankings**.
-2. If there are any rank ties, **flip a coin** for each to determine the final
-   ranking. Write the result into column `K` (`Rank`).
-3. Copy and paste `Rank` - `W` into **Ranking for Printing**.
-4. Print, then post to the board and to Facebook.
+1. Split the rankings into groups of 32 by rank: A is ranks 1-32, B is
+   33-64, and so on; the last group takes the remainder.
 
 For each `Group-X`:
 
@@ -133,31 +95,30 @@ For each `Group-X`:
 
 ## Handling problems during the day
 
-**A team is lost mid-day.** Update the sheets manually. If it happens before
-the rounds are drawn, it is cleaner to fix the team list and redraw:
-
-```
->> zclean          clear all rounds, keep the teams
->> trem 42         remove the team
->> zmake           redraw
-```
+**A team is lost mid-day.** If it happens before the rounds are drawn,
+remove the team on the **Teams** page and draw. If rounds are already
+drawn, their opponents get a 13-7 walkover in later rounds (the no-show
+button), or replace the games by hand on each **Round** page.
 
 **A team is kicked out.** They are out for good.
 
 **A player is sick.** Their teammate can play with 3 boules. They may also be
 able to play the next day.
 
-**A single game needs fixing.** Use `gadd <team> <opponent> <court>` to append
-a corrected game rather than redrawing the whole round.
+**A single game needs fixing.** On the round's page, open **Fix one game by
+hand** and enter team, opponent and court. Both teams' games in that round
+are replaced and their scores for it cleared.
 
-**A whole round needs redrawing.** `zrem` deletes the most recent round, then
-`zmake` draws a fresh one.
+**A whole round needs redrawing.** On **Rounds**, delete the round, then draw
+again.
+
+**The app is down.** The command line works on the same file: `python3
+pao.py <name>`, then `help`. Scores entered in the app are kept.
 
 ---
 
 ## Backups
 
-The entire tournament is the single file `<name>.p` in the tournament folder.
-Copy it somewhere safe between rounds. The exported CSVs are timestamped and
-never overwrite each other, so old exports remain available if you need to
-compare against what was actually posted.
+The entire tournament, scores included, is the single file `<name>.p` in
+the `pao` folder. Copy it somewhere safe between rounds. Print views can be
+saved as PDF from the print dialog if you want a record of what was posted.

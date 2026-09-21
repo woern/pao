@@ -15,6 +15,27 @@ to type scores into.
 
 ---
 
+## Two ways to run it
+
+**Web app (recommended on tournament day).** A browser interface that
+covers the whole of Day 1: courts, team import, drawing rounds, printing
+court cards and score slips, entering scores as they come in, and live
+standings with coin-flip tie breaks. Double-click **Start PAO.command**
+(Mac) or **Start PAO.bat** (Windows), or run
+
+```
+python3 -m paoweb
+```
+
+A browser window opens on a page where you pick an existing tournament or
+name a new one. See [Web app](#web-app) below.
+
+**Command line.** The original interactive shell, `python3 pao.py
+amelia2025`. Both tools open the same `amelia2025.p` file, so you can switch
+between them.
+
+---
+
 ## Requirements
 
 - **Python 3.9 or newer.** Tested on 3.9 and 3.13.
@@ -72,6 +93,57 @@ closed laptop will not lose the draw.
 
 ---
 
+## Web app
+
+```
+python3 -m paoweb                       start, then choose or create a tournament in the browser
+python3 -m paoweb amelia2025            open (or create) amelia2025.p straight away
+python3 -m paoweb --lan                 also let phones on the same Wi-Fi open it
+python3 -m paoweb --port 9000 --no-browser
+```
+
+**Start PAO.command** (Mac) and **Start PAO.bat** (Windows) do the first
+of these when double-clicked. If port 8000 is taken, for example by a copy
+of the app you forgot to close, the next free port is used and printed. A terminal window opens alongside the browser;
+leave it open, and close it or press Ctrl-C to stop the app.
+
+Nothing needs installing: the server is Python's standard library.
+Everything is saved to `<name>.p` in the app's folder the moment it
+changes, and that one file is the whole tournament. The choose-a-tournament
+page lists every such file in the folder, and **Switch tournament** in the
+top bar returns to it.
+
+Pages:
+
+| page | what it does |
+| ---- | ------------ |
+| Choose a tournament | Existing tournaments in the folder, with team and round counts, and a box to name a new one |
+| Home | Team, court and round counts, and what to do next |
+| Courts | Main field and annex ranges, the same as `cset` |
+| Teams | Paste the team list or pick the CSV file; add, edit or remove one team |
+| Rounds | Draw the next round, delete or fix rounds, links to every print view. If the courts are too tight for a clean draw, the round is drawn anyway and the page names the teams that repeat a court |
+| Round *n* | Matchups by court, unused courts, a form to replace one game by hand |
+| Round *n* scores | Two boxes per game. Scores save as you type; Enter jumps to the next box; a 13-7 button records a no-show |
+| Standings | Live rankings by wins, point differential, points for over points against, then Buchholz (the sum of opponents' wins). Once every game is scored, teams still tied get a coin-flip form |
+
+Print views open in a new tab and use the browser's print dialog, so
+"Save as PDF" works everywhere:
+
+- **Court cards**: one card per team, twenty per page, so players find their
+  own number and read their court and opponent. Same layout as the old
+  `g1-20` sheets.
+- **List with names**: every team with opponent and court, for posting.
+- **Score slips**: five per page, pre-filled with round, court and team
+  numbers, with signature lines.
+- **Rankings**: rank, team, number, wins, differential, ratio and opponents' wins.
+
+The BYE team is scored 13-7 automatically and never appears in standings.
+
+With `--lan`, the home page shows the address other devices can use. There
+is no login, so only use it on a network you control.
+
+---
+
 ## Concepts
 
 **Tournament file.** All state lives in `<name>.p` in the current directory.
@@ -102,11 +174,14 @@ If you have only one field, set section `a` and leave `b` unused.
 **Round.** `zmake` always builds the *next* round. It takes no round number.
 To redraw a round, delete it with `zrem` and run `zmake` again.
 
-**Bye.** If the team count is odd, the program adds a filler team named
-`BYE-<n>` so everyone has an opponent. Whoever draws it has a bye. The filler
-team is added to the tournament permanently and shows up in `tlist`. By
-convention it is put in group `EU` — no real team should use that group, or
-those teams could never draw the bye.
+**Bye.** If the number of real teams is odd, the program adds a filler team
+named `BYE-<n>` so everyone has an opponent. Whoever draws it has a bye and
+is scored 13-7. The filler team stays in the tournament and shows up in
+`tlist`, but it only plays when the real count is odd: if a team arrives
+late and makes the count even, the BYE sits that round out, and it is never
+duplicated. Its number cannot be reused for a real team. By convention it is
+put in group `EU` — no real team should use that group, or those teams could
+never draw the bye.
 
 ---
 
@@ -133,8 +208,12 @@ Before importing, check that:
 - names have no `/` problems, stray blank spaces, or accented characters that
   your printing workflow cannot handle.
 
-Rows without a numeric team number or without a name are skipped, and the
-line numbers are reported so you can go fix them:
+Rows with neither a group nor a name are empty and ignored quietly. The
+ForCSV sheet numbers every row and names empty ones `/`, so its unused
+rows come through this way and do not become teams. Rows that have a
+group but no name, a name but no group, or a team number that is not a
+number are skipped, and the line numbers are reported so you can go fix
+them:
 
 ```
 >> load teams.csv
@@ -234,10 +313,12 @@ court,team,score,,opponent,score
 
 ## Troubleshooting
 
-**`Could not create a round after 3 attempts. Try zmake -f.`**
+**`Could not create a round after 50 attempts. Try zmake -f.`**
 
 The draw is random and greedy, so on a tight board it can run out of legal
-pairings and give up. Run `zmake -f`. The `-f` flag relaxes only the
+pairings. It retries 50 times before giving up (older versions tried only
+3 times, which made small test fields fail in rounds 3 and 4 for no good
+reason). If it still fails, run `zmake -f`. The `-f` flag relaxes only the
 court-history and annex rules — it will still never create a rematch or pair
 two teams from the same group.
 
@@ -341,6 +422,16 @@ for.
 
 ---
 
+## Code layout
+
+| path | what it is |
+| ---- | ---------- |
+| `pao.py` | The command-line shell |
+| `paolib/` | Shared logic: `model` (teams, courts, games, scores), `scheduler` (the draw), `standings`, `teamsio` (team-list parsing), `store` (files) |
+| `paoweb/` | The web app: `server` (tiny HTTP server and router), `pages` (routes and HTML), `static/` |
+| `Start PAO.command`, `Start PAO.bat` | Double-click launchers for the web app |
+| `tests/` | `python3 -m unittest discover` |
+
 ## Tests
 
 There is a test suite covering the scheduler invariants — the part that could
@@ -368,6 +459,8 @@ What it guards:
 - CSV export column layouts, which the Google Sheets workflow depends on
 - tournament files written by the 2021–2024 versions still load
 - every command has help text
+- score entry, standings order, tie detection and coin-flip tiebreaks
+- the web app end to end, against a real server on a spare port
 
 If you change the scheduler, run this before the tournament, not during it.
 
