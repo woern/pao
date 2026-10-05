@@ -8,39 +8,25 @@ can be exported as CSV for printing and for score entry.
 
     python3 pao.py <tournament-name>
 
-Type `help` at the prompt for a guided command list.
+Type `help` at the prompt for a guided command list. The same tournament
+file can be opened in the web app: `python3 -m paoweb <tournament-name>`.
 """
 
 import cmd
 import csv
-import datetime
-import os
-import pickle
 import pprint
-import random
 import sys
 import time
 
-VERSION = "0.3.0"
+from paolib import model, scheduler, store, teamsio
+from paolib.model import (  # noqa: F401  (re-exported for callers and tests)
+    BYE_GROUP, DEFAULT_COURT_MAP, UNUSED_SECTION, new_tournament, migrate, utcnow,
+)
+from paolib.scheduler import MAX_ROUND_ATTEMPTS  # noqa: F401
+from paolib.store import tournament_path  # noqa: F401
+from paolib.teamsio import CSV_GROUP, CSV_NAME, CSV_NUMBER  # noqa: F401
 
-# A court section set to this range means "this section is not in use".
-UNUSED_SECTION = (0, 0)
-
-# Section "a" is the main field; section "b" is the annex/overflow field.
-# Teams that have played the annex get first claim on section "a" next round.
-DEFAULT_COURT_MAP = {"a": (1, 10), "b": UNUSED_SECTION}
-
-# Column positions in an imported teams CSV. Row 1 is assumed to be a header.
-CSV_NUMBER = 0
-CSV_GROUP = 1
-CSV_NAME = 2
-
-# Group assigned to the filler team added when the team count is odd. No real
-# team should use this group, or those teams can never draw the bye.
-BYE_GROUP = "EU"
-
-# How many times to retry building a round before giving up and suggesting -f.
-MAX_ROUND_ATTEMPTS = 3
+VERSION = "0.4.0"
 
 
 ##################################
@@ -91,47 +77,6 @@ def render_plain(rows):
         "  ".join(cell.ljust(w) for cell, w in zip(row, widths)).rstrip()
         for row in rows
     )
-
-
-##################################
-#######  tournament state  #######
-##################################
-
-def utcnow():
-    return datetime.datetime.now(datetime.timezone.utc)
-
-
-def new_tournament(name=""):
-    now = utcnow()
-    return {
-        "name": name,
-        "teams": {},
-        "created_at": now,
-        "modified_at": now,
-        "court_map": dict(DEFAULT_COURT_MAP),
-    }
-
-
-def tournament_path(name):
-    return "./%s.p" % name
-
-
-def migrate(tournament):
-    """Fill in fields missing from tournament files saved by older versions."""
-    tournament.setdefault("name", "")
-    tournament.setdefault("teams", {})
-    tournament.setdefault("created_at", utcnow())
-    tournament.setdefault("modified_at", utcnow())
-    if not tournament.get("court_map"):
-        tournament["court_map"] = dict(DEFAULT_COURT_MAP)
-
-    for team in tournament["teams"].values():
-        team.setdefault("name", "Anonymous")
-        team.setdefault("group", "-")
-        team.setdefault("games", [])
-        team.setdefault("courts", [])
-        team.setdefault("played_b", 0)
-    return tournament
 
 
 def parse_flags(line):
@@ -212,13 +157,10 @@ class PetanqueTournament(cmd.Cmd):
         self.prompt = "%s >> " % self.tournament.get("name")
 
     def save(self):
-        self.tournament["modified_at"] = utcnow()
-        path = tournament_path(self.tournament["name"])
         try:
-            with open(path, "wb") as handle:
-                pickle.dump(self.tournament, handle)
-        except OSError as exc:
-            print("[ERROR] Could not save %s: %s" % (path, exc))
+            store.save(self.tournament)
+        except store.StoreError as exc:
+            print("[ERROR]", exc)
 
     def export_csv(self, filename, rows):
         try:
@@ -232,99 +174,55 @@ class PetanqueTournament(cmd.Cmd):
 
     def read_csv(self, filename):
         """Import teams from a CSV whose first row is a header."""
-        if not os.path.isfile(filename):
+        try:
+            rows, skipped = teamsio.read_teams_file(filename)
+        except OSError:
             print("[ERROR] File not found:", filename)
             return
 
-        imported = 0
-        skipped = []
-        # utf-8-sig strips the byte-order mark that Excel and Sheets add.
-        with open(filename, "rt", encoding="utf-8-sig", newline="") as handle:
-            for lineno, row in enumerate(csv.reader(handle), start=1):
-                if lineno == 1 or not any(cell.strip() for cell in row):
-                    continue
-
-                if len(row) <= CSV_NAME:
-                    skipped.append(lineno)
-                    continue
-
-                number = row[CSV_NUMBER].strip()
-                group = row[CSV_GROUP].strip() or "-"
-                name = row[CSV_NAME].strip()
-
-                if not number.isdigit() or not name:
-                    skipped.append(lineno)
-                    continue
-
-                self.add_team(int(number), group, name, quiet=True)
-                imported += 1
-
+        added, updated, rejected = teamsio.import_teams(self.tournament, rows)
         self.save()
-        print("Imported %d teams from %s" % (imported, filename))
+        print("Imported %d teams from %s" % (added + updated, filename))
         if skipped:
-            shown = ", ".join(str(n) for n in skipped[:10])
-            more = " ..." if len(skipped) > 10 else ""
-            print("[WARN] Skipped %d unusable row(s) on line(s): %s%s" % (len(skipped), shown, more))
+            print("[WARN]", teamsio.format_skipped(skipped))
+        if teamsio.ungrouped(rows):
+            print("[WARN]", teamsio.format_ungrouped(rows))
+        for number, reason in rejected:
+            print("[WARN] Team %d not imported: %s" % (number, reason))
 
     def add_team(self, num, group, name, quiet=False):
         """Insert or update a team, keeping any schedule it already has."""
-        teams = self.tournament["teams"]
-        existing = teams.get(num)
-
-        if existing:
-            old = (existing["group"], existing["name"])
-            existing["group"] = group
-            existing["name"] = name
-            if not quiet:
-                print("Updated", num, group, name, "from", old[0], old[1])
+        created, previous = model.add_team(self.tournament, num, group, name)
+        if quiet:
+            return
+        if created:
+            print("Added", num, group, name)
         else:
-            teams[num] = dict(name=name, group=group, games=[], courts=[], played_b=0)
-            if not quiet:
-                print("Added", num, group, name)
-
-    def in_section(self, section, num):
-        bounds = self.tournament["court_map"].get(section)
-        if not bounds or tuple(bounds) == UNUSED_SECTION:
-            return False
-        return bounds[0] <= num <= bounds[1]
+            print("Updated", num, group, name, "from", previous[0], previous[1])
 
     def is_court_a(self, num):
-        return self.in_section("a", num)
+        return model.is_court_a(self.tournament, num)
 
     def is_court_b(self, num):
-        return self.in_section("b", num)
+        return model.is_court_b(self.tournament, num)
 
     def court_map(self):
         """Return (all courts, section-a courts) as sorted lists."""
-        courts = []
-        courts_a = []
-
-        for section, bounds in self.tournament["court_map"].items():
-            if not bounds or tuple(bounds) == UNUSED_SECTION:
-                continue
-            for num in range(bounds[0], bounds[1] + 1):
-                courts.append(num)
-                if section == "a":
-                    courts_a.append(num)
-
-        return sorted(set(courts)), sorted(set(courts_a))
+        return model.court_map(self.tournament)
 
     def rounds_played(self):
-        teams = self.tournament["teams"].values()
-        return max((len(t["games"]) for t in teams), default=0)
+        return model.rounds_played(self.tournament)
 
     def format_team_game(self, tid, team, rnd):
-        oid = team["games"][rnd]
-        opp = self.tournament["teams"].get(oid)
-        opp_name = opp["name"] if opp else "(removed team)"
-        court = team["courts"][rnd] if len(team["courts"]) > rnd else "?"
-        return [tid, team["name"], "vs", oid, opp_name, "court", court]
+        oid, court = model.team_game(self.tournament, tid, rnd)
+        if oid is None:
+            return [tid, team["name"], "sat out", "", "", "", ""]
+        opp_name = model.team_name(self.tournament, oid)
+        return [tid, team["name"], "vs", oid, opp_name, "court", court if court is not None else "?"]
 
     def teams_in_round(self, rnd):
         """Yield (tid, team) for every team with a game scheduled in `rnd`."""
-        for tid, team in sorted(self.tournament["teams"].items()):
-            if len(team["games"]) > rnd:
-                yield tid, team
+        return model.teams_in_round(self.tournament, rnd)
 
     def show_rnd(self, rnd):
         table = [self.format_team_game(tid, team, rnd) for tid, team in self.teams_in_round(rnd)]
@@ -335,190 +233,21 @@ class PetanqueTournament(cmd.Cmd):
         print("Round", rnd + 1)
         print(render_grid(table))
 
-    def remove_rnd(self, rnd):
-        """Delete round `rnd` (0-based) from every team. -1 removes the last."""
-        removed = 0
-
-        for team in self.tournament["teams"].values():
-            games = team["games"]
-            courts = team["courts"]
-
-            if rnd == -1:
-                if not games:
-                    continue
-                idx = len(games) - 1
-            else:
-                if len(games) <= rnd:
-                    continue
-                idx = rnd
-
-            court = courts[idx] if idx < len(courts) else None
-            del games[idx]
-            if idx < len(courts):
-                del courts[idx]
-
-            if court is not None and self.is_court_b(court):
-                team["played_b"] = max(0, team["played_b"] - 1)
-            removed += 1
-
-        return removed
-
     def export_rnd(self, rnd):
-        matchups = []
-        scores = []
-        seen = set()
-
-        for tid, team in self.teams_in_round(rnd):
-            row = self.format_team_game(tid, team, rnd)
-            matchups.append(row)
-
-            oid, court = row[3], row[6]
-            if tid not in seen:
-                scores.append([court, tid, 0, "", oid, 0])
-                seen.update((tid, oid))
-
+        matchups = [self.format_team_game(tid, team, rnd) for tid, team in self.teams_in_round(rnd)]
         if not matchups:
             print("[ERROR] Round %d has not been scheduled." % (rnd + 1))
             return
+
+        scores = [[g.court if g.court is not None else "?", g.tid, 0, "", g.oid, 0]
+                  for g in model.games_in_round(self.tournament, rnd)]
 
         stamp = int(time.time())
         name = self.tournament["name"]
 
         # One file to print and post, one file to type scores into.
         self.export_csv("%s_round_%d_%d.csv" % (name, rnd + 1, stamp), matchups)
-        scores.sort(key=lambda r: r[0] if isinstance(r[0], int) else sys.maxsize)
         self.export_csv("%s_score_round_%d_%d.csv" % (name, rnd + 1, stamp), scores)
-
-    ##################################
-    #######  round scheduling   ######
-    ##################################
-
-    def add_bye_team(self):
-        """Add a filler team so the team count is even."""
-        last = max(self.tournament["teams"], default=0)
-        self.add_team(last + 1, BYE_GROUP, "BYE-%d" % (last + 1), quiet=True)
-        print("[INFO] Odd number of teams, added BYE-%d." % (last + 1))
-
-    def pick_opponent(self, tid, groups, scheduled, exclude=frozenset()):
-        """Choose an opponent this team has not met and is not grouped with."""
-        teams = self.tournament["teams"]
-        team = teams[tid]
-
-        candidates = set(teams) - scheduled - set(team["games"]) - groups[team["group"]] - exclude - {tid}
-        if not candidates:
-            return None
-
-        # sorted() keeps the candidate order stable so the shuffle is the only
-        # source of randomness; random.choice needs a sequence, not a set.
-        oid = random.choice(sorted(candidates))
-        scheduled.update((tid, oid))
-        return oid
-
-    def pick_court(self, tid, oid, pool, force=False):
-        """Choose a court from `pool` that neither team has played on."""
-        if not pool:
-            return None
-
-        options = list(pool)
-        if not force:
-            teams = self.tournament["teams"]
-            played = set(teams[tid]["courts"]) | set(teams[oid]["courts"])
-            options = [c for c in options if c not in played]
-
-        return random.choice(options) if options else None
-
-    def build_groups(self):
-        groups = {}
-        for tid, team in self.tournament["teams"].items():
-            groups.setdefault(team["group"], set()).add(tid)
-        return groups
-
-    def create_round(self, force=False, debug=False):
-        """Return a list of (team, opponent, court) tuples, or [] on failure."""
-        if len(self.tournament["teams"]) < 2:
-            print("[ERROR] Need at least 2 teams to schedule a round.")
-            return []
-
-        if len(self.tournament["teams"]) % 2 == 1:
-            self.add_bye_team()
-
-        courts, courts_a = self.court_map()
-        needed = len(self.tournament["teams"]) // 2
-        if len(courts) < needed:
-            print("[ERROR] %d games need %d courts, but only %d are defined. Use `cset`."
-                  % (needed, needed, len(courts)))
-            return []
-
-        groups = self.build_groups()
-        played_annex = set()
-        rest = set()
-        for tid, team in self.tournament["teams"].items():
-            (played_annex if team["played_b"] > 0 else rest).add(tid)
-
-        if force:
-            rest |= played_annex
-            played_annex = set()
-
-        games = []
-        scheduled = set()
-
-        # Teams that already played the annex get first claim on section a.
-        for tid in sorted(played_annex):
-            if tid in scheduled:
-                continue
-
-            oid = self.pick_opponent(tid, groups, scheduled, exclude=played_annex)
-            if debug:
-                print("[DEBUG] annex", tid, "vs", oid)
-            if oid is None:
-                return []
-
-            court = self.pick_court(tid, oid, courts_a, force=force)
-            if court is None:
-                return []
-
-            courts.remove(court)
-            courts_a.remove(court)
-            games.append((tid, oid, court))
-
-        # Everyone else, in random order.
-        remaining = sorted(rest)
-        random.shuffle(remaining)
-
-        for tid in remaining:
-            if tid in scheduled:
-                continue
-
-            oid = self.pick_opponent(tid, groups, scheduled)
-            if debug:
-                print("[DEBUG] main ", tid, "vs", oid)
-            if oid is None:
-                return []
-
-            court = self.pick_court(tid, oid, courts_a or courts, force=force)
-            if court is None:
-                return []
-
-            courts.remove(court)
-            if court in courts_a:
-                courts_a.remove(court)
-            games.append((tid, oid, court))
-
-        return games
-
-    def update_teams(self, games):
-        teams = self.tournament["teams"]
-
-        for tid, oid, court in games:
-            teams[tid]["courts"].append(court)
-            teams[tid]["games"].append(oid)
-
-            teams[oid]["courts"].append(court)
-            teams[oid]["games"].append(tid)
-
-            if self.is_court_b(court):
-                teams[tid]["played_b"] += 1
-                teams[oid]["played_b"] += 1
 
     ##################################
     #######  tournament CLI     ######
@@ -541,21 +270,17 @@ class PetanqueTournament(cmd.Cmd):
             print("[ERROR] usage: use <name>")
             return
 
-        path = tournament_path(name)
-        if os.path.isfile(path) and os.access(path, os.R_OK):
-            try:
-                with open(path, "rb") as handle:
-                    self.tournament = migrate(pickle.load(handle))
-            except (OSError, pickle.UnpicklingError, EOFError, AttributeError) as exc:
-                print("[ERROR] Could not read %s: %s" % (path, exc))
-                return
+        try:
+            self.tournament, created = store.open_or_create(name)
+        except store.StoreError as exc:
+            print("[ERROR]", exc)
+            return
+
+        if created:
+            print("Created", tournament_path(name))
+        else:
             print("Opened %s (%d teams, %d rounds)"
                   % (name, len(self.tournament["teams"]), self.rounds_played()))
-        else:
-            # A fresh dict, so nothing carries over from the previous tournament.
-            self.tournament = new_tournament(name)
-            self.save()
-            print("Created", path)
 
         self.set_prompt()
 
@@ -769,9 +494,7 @@ class PetanqueTournament(cmd.Cmd):
             print("[ERROR] Team %d not found." % tid)
             return
 
-        orphaned = sum(other["games"].count(tid) for other in self.tournament["teams"].values())
-
-        del self.tournament["teams"][tid]
+        orphaned = model.remove_team(self.tournament, tid)
         self.save()
         print("Removed", tid, team["name"])
 
@@ -849,15 +572,11 @@ class PetanqueTournament(cmd.Cmd):
             return
 
         low, high = int(args[1]), int(args[2])
-        if (low, high) != UNUSED_SECTION and low < 1:
-            print("[ERROR] Court numbers start at 1. Use `cset %s 0 0` to mark the section unused." % args[0])
+        try:
+            model.set_section(self.tournament, args[0], low, high)
+        except model.ModelError as exc:
+            print("[ERROR]", exc)
             return
-
-        if low > high:
-            print("[ERROR] `from` must not be greater than `to`.")
-            return
-
-        self.tournament["court_map"][args[0]] = (low, high)
         self.save()
 
         courts, _ = self.court_map()
@@ -933,26 +652,24 @@ class PetanqueTournament(cmd.Cmd):
         force = "-f" in flags
         debug = "-d" in flags or "-v" in flags
 
-        games = []
-        for attempt in range(1, MAX_ROUND_ATTEMPTS + 1):
-            try:
-                games = self.create_round(force=force, debug=debug)
-            except Exception as exc:  # a bad draw should not kill the session
-                print("[ERROR] Could not build the round:", exc)
-                return
+        def log(msg):
+            if debug or msg.startswith("[INFO]"):
+                print(msg)
 
-            if games:
-                break
-            if debug:
-                print("[DEBUG] attempt %d produced no round" % attempt)
-
-        if not games:
-            print("Could not create a round after %d attempts. Try `zmake -f`." % MAX_ROUND_ATTEMPTS)
+        try:
+            rnd = scheduler.draw_round(self.tournament, force=force, log=log)
+        except scheduler.DrawFailed as exc:
+            print("%s Try `zmake -f`." % exc)
+            return
+        except scheduler.DrawError as exc:
+            print("[ERROR]", exc)
+            return
+        except Exception as exc:  # a bad draw should not kill the session
+            print("[ERROR] Could not build the round:", exc)
             return
 
-        self.update_teams(games)
         self.save()
-        self.show_rnd(self.rounds_played() - 1)
+        self.show_rnd(rnd)
 
     def do_zshow(self, line):
         """usage: zshow [round | all]
@@ -1048,7 +765,7 @@ class PetanqueTournament(cmd.Cmd):
             print("[ERROR] usage: zrem [round]")
             return
 
-        affected = self.remove_rnd(rnd)
+        affected = model.remove_round(self.tournament, rnd)
         self.save()
         print("Removed %s from %d teams. %d rounds remain." % (label, affected, self.rounds_played()))
 
@@ -1061,12 +778,7 @@ class PetanqueTournament(cmd.Cmd):
         if not self.tournament_loaded():
             return
 
-        total = self.rounds_played()
-        for team in self.tournament["teams"].values():
-            team["games"] = []
-            team["courts"] = []
-            team["played_b"] = 0
-
+        total = model.clear_rounds(self.tournament)
         self.save()
         print("Cleared %d round(s). %d teams kept." % (total, len(self.tournament["teams"])))
 
@@ -1095,22 +807,11 @@ class PetanqueTournament(cmd.Cmd):
 
         tid, oid, court = (int(a) for a in args)
         teams = self.tournament["teams"]
-        missing = [str(n) for n in (tid, oid) if n not in teams]
-        if missing:
-            print("[ERROR] Team(s) not found:", ", ".join(missing))
+        try:
+            model.add_game(self.tournament, tid, oid, court, both="-s" not in flags)
+        except model.ModelError as exc:
+            print("[ERROR]", exc)
             return
-
-        teams[tid]["games"].append(oid)
-        teams[tid]["courts"].append(court)
-
-        if "-s" not in flags:
-            teams[oid]["games"].append(tid)
-            teams[oid]["courts"].append(court)
-
-        if self.is_court_b(court):
-            teams[tid]["played_b"] += 1
-            if "-s" not in flags:
-                teams[oid]["played_b"] += 1
 
         self.save()
         print(tid, teams[tid]["name"], "vs", oid, teams[oid]["name"], "court", court)

@@ -297,14 +297,14 @@ class TestCsvImport(TempDirCase):
             "1,FL,Alpha\n"
             "notanumber,GA,Bravo\n"   # non-numeric number
             "3,TX,\n"                 # no name
-            "4\n"                     # too few columns
+            "4\n"                     # number only: an empty row, ignored quietly
             "\n"                      # blank
             "5,LA,Echo\n"
         )
         cli = self.make_cli()
         out = capture(cli.do_load, path)
         self.assertEqual(sorted(cli.tournament["teams"]), [1, 5])
-        self.assertIn("Skipped 3", out)
+        self.assertIn("Skipped 2", out)
 
     def test_byte_order_mark_is_stripped(self):
         # Excel and Google Sheets prepend a BOM, which would otherwise make
@@ -331,11 +331,23 @@ class TestCsvImport(TempDirCase):
         out = capture(cli.do_load, "nope.csv")
         self.assertIn("ERROR", out)
 
-    def test_blank_group_becomes_placeholder(self):
-        path = self.write_csv("n,g,name\n1,,Alpha\n")
+    def test_blank_group_is_imported_and_reported(self):
+        # Team 33 in 2024 had no category. It is a real team and must not be lost.
+        path = self.write_csv("n,g,name\n1,,Alpha\n2,FL,Bravo\n")
         cli = self.make_cli()
-        quiet(cli.do_load, path)
+        out = capture(cli.do_load, path)
+        self.assertEqual(sorted(cli.tournament["teams"]), [1, 2])
         self.assertEqual(cli.tournament["teams"][1]["group"], "-")
+        self.assertIn("no group", out)
+        self.assertIn("1 Alpha", out)
+
+    def test_numbered_empty_rows_are_ignored_silently(self):
+        # The ForCSV sheet numbers every row and names empty ones "/".
+        path = self.write_csv("n,g,name\n1,FL,Alpha\n2,,/\n3,,/\n")
+        cli = self.make_cli()
+        out = capture(cli.do_load, path)
+        self.assertEqual(sorted(cli.tournament["teams"]), [1])
+        self.assertNotIn("Skipped", out)
 
 
 class TestSchedulerInvariants(TempDirCase):
