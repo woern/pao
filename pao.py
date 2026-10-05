@@ -185,6 +185,8 @@ class PetanqueTournament(cmd.Cmd):
         print("Imported %d teams from %s" % (added + updated, filename))
         if skipped:
             print("[WARN]", teamsio.format_skipped(skipped))
+        if teamsio.ungrouped(rows):
+            print("[WARN]", teamsio.format_ungrouped(rows))
         for number, reason in rejected:
             print("[WARN] Team %d not imported: %s" % (number, reason))
 

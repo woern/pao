@@ -331,12 +331,15 @@ class TestCsvImport(TempDirCase):
         out = capture(cli.do_load, "nope.csv")
         self.assertIn("ERROR", out)
 
-    def test_blank_group_is_skipped_and_reported(self):
+    def test_blank_group_is_imported_and_reported(self):
+        # Team 33 in 2024 had no category. It is a real team and must not be lost.
         path = self.write_csv("n,g,name\n1,,Alpha\n2,FL,Bravo\n")
         cli = self.make_cli()
         out = capture(cli.do_load, path)
-        self.assertEqual(sorted(cli.tournament["teams"]), [2])
-        self.assertIn("Skipped 1", out)
+        self.assertEqual(sorted(cli.tournament["teams"]), [1, 2])
+        self.assertEqual(cli.tournament["teams"][1]["group"], "-")
+        self.assertIn("no group", out)
+        self.assertIn("1 Alpha", out)
 
     def test_numbered_empty_rows_are_ignored_silently(self):
         # The ForCSV sheet numbers every row and names empty ones "/".

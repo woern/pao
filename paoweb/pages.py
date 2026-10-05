@@ -17,6 +17,7 @@ def route(method, pattern):
 
 
 def register(app):
+    from . import day2  # noqa: F401  (registers its routes on import)
     for method, pattern, fn in ROUTES:
         app.route(method, pattern)(fn)
 
@@ -31,6 +32,7 @@ NAV = [
     ("/teams", "Teams"),
     ("/rounds", "Rounds"),
     ("/standings", "Standings"),
+    ("/day2", "Day 2"),
 ]
 
 
@@ -263,9 +265,11 @@ def setup_save(app, req):
 def teams(app, req):
     t = app.tournament
     rows = []
+    ungrouped = [tid for tid, team in t["teams"].items() if team["group"] == teamsio.NO_GROUP]
     for tid, team in sorted(t["teams"].items()):
+        group = esc(team["group"]) if team["group"] != teamsio.NO_GROUP else "<span class='tag warn'>no group</span>"
         rows.append([
-            tid, esc(team["group"]), esc(team["name"]) + (" <span class='tag'>BYE</span>" if model.is_bye(team) else ""),
+            tid, group, esc(team["name"]) + (" <span class='tag'>BYE</span>" if model.is_bye(team) else ""),
             len(team["games"]), team["played_b"],
             button_form("/teams/%d/remove" % tid, "remove", "small danger",
                         confirm="Remove team %d %s?" % (tid, team["name"])),
@@ -273,6 +277,10 @@ def teams(app, req):
     drawn = model.rounds_played(t)
     warning = ("<div class='flash warn'>Rounds are already drawn. Editing a name or group is safe; "
                "removing a team leaves its opponents with a missing game to fix by hand.</div>" if drawn else "")
+    if ungrouped:
+        warning += ("<div class='flash warn'>%d team(s) have no group: %s. Use <b>Add or edit one team</b> below to set it. "
+                    "Until then the draw lets them play anyone.</div>"
+                    % (len(ungrouped), ", ".join(str(n) for n in sorted(ungrouped))))
 
     body = """
 %s
@@ -314,8 +322,11 @@ def teams_import(app, req):
     rows, skipped = teamsio.parse_teams(text)
     added, updated, rejected = teamsio.import_teams(app.tournament, rows)
     app.save()
-    msg = "Imported %d teams (%d new, %d updated)." % (added + updated, added, updated)
+    msg = "Imported %d teams (%d new, %d updated). The list now has %d teams." % (
+        added + updated, added, updated, len(model.real_teams(app.tournament)))
     problems = [teamsio.format_skipped(skipped)] if skipped else []
+    if teamsio.ungrouped(rows):
+        problems.append(teamsio.format_ungrouped(rows))
     problems += ["Team %d not imported: %s" % (number, reason) for number, reason in rejected]
     return redirect("/teams", msg=msg, err=" ".join(problems) or None)
 
@@ -545,19 +556,35 @@ def scores(app, req):
         tab += 2
 
     s = model.round_score_summary(t, rnd)
+    unscored = s["games"] - s["ok"]
     body = round_switcher(t, rnd, "/scores") + """
 <p class="row">
   <span id="summary" class="muted">%d of %d games scored, %d tied</span>
   <a class="button" href="/print/rounds/%d/slips" target="_blank">Print score slips</a>
+  <span class="spacer"></span>
+  %s
 </p>
 <form method="post" action="/rounds/%d/scores" id="scores">
 %s
 <p><button class="primary">Save all</button> <span class="muted">Scores also save on their own as you type, and can be changed at any time, for any round. No-show: use the 13-7 button pointing at the team that showed up.</span></p>
 </form>
-""" % (s["ok"], s["games"], s["tied"], n, n,
+""" % (s["ok"], s["games"], s["tied"], n,
+       button_form("/rounds/%d/testscores" % n, "Fill with test scores", "small testing",
+                   confirm="TESTING ONLY. Fill the %d unscored game(s) of round %d with random scores? "
+                           "Games that already have a score are kept." % (unscored, n)) if unscored else "",
+       n,
        table(["Court", "Team", "Score", "Score", "Opponent", "Status", "No-show"], rows, "scores",
              row_attrs=lambda i: attrs[i]))
     return layout(app, req, "Round %d scores" % n, body, "/rounds")
+
+
+@route("POST", r"/rounds/(\d+)/testscores")
+def scores_test_fill(app, req):
+    t = app.tournament
+    rnd = round_index(req.args[0], t)
+    filled = model.fill_test_scores(t, rnd)
+    app.save()
+    return redirect("/rounds/%d/scores" % (rnd + 1), msg="Filled %d game(s) with random test scores." % filled)
 
 
 def apply_scores(t, rnd, getter):

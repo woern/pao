@@ -79,17 +79,28 @@ Print the **rankings** and post them to the board and to Facebook.
 
 ## 5. Day 2
 
-Day 2 is not in the app yet. Use the printed rankings from the app and the
-Google Group sheets:
+Everything runs in the app. Before you start, check **Standings**: every
+game must have a score and every tie a coin flip, or the groups cannot be
+made.
 
-1. Split the rankings into groups of 32 by rank: A is ranks 1-32, B is
-   33-64, and so on; the last group takes the remainder.
+1. Open **Day 2**. Set the number of groups and each group's size. The
+   form suggests groups of 32 with the remainder in the last group; sizes
+   of 8, 16, 32 or 64 give a clean bracket, anything else gives the top
+   seeds a bye. Untick **consolation** for a group whose first-round losers
+   do not play on. Check the preview, then **Create groups and brackets**.
+2. Print **team lists by group** and post them.
+3. Open each group, print its brackets, and post them. Courts are already
+   drawn for the first round; use **shuffle courts** if you want a
+   different set.
+4. As results come in, type both scores into the match. The winner moves
+   into the next round and, in the first round, the loser moves into the
+   consolation bracket. Courts for the new matches are drawn on the spot.
+   For a no-show, click the 13-7 arrow pointing at the team that turned up.
+5. Reprint a bracket whenever you want to post an update. The Day 2
+   overview shows each group's progress and champion.
 
-For each `Group-X`:
-
-1. Open the `Group-X` sheet.
-2. Copy/paste the teams and team numbers into the `Players` tab.
-3. Print pages 1-3 and post to the board.
+Day 1 changes after the groups are made are flagged on the Day 2 page; if
+they matter, delete the groups and create them again.
 
 ---
 
@@ -112,8 +123,15 @@ are replaced and their scores for it cleared.
 **A whole round needs redrawing.** On **Rounds**, delete the round, then draw
 again.
 
-**The app is down.** The command line works on the same file: `python3
-pao.py <name>`, then `help`. Scores entered in the app are kept.
+**A Day 2 result was entered wrongly.** Fix it on the match. Everything
+that depended on it, including later scores, is cleared and drawn again.
+
+**No court is free for a match.** Its court shows a question mark. Once
+other games finish, click **shuffle courts** on that round.
+
+**The app is down.** The command line works on the same file for Day 1:
+`python3 pao.py <name>`, then `help`. Scores entered in the app are kept.
+Day 2 has no command-line equivalent; restart the app.
 
 ---
 

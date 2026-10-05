@@ -82,3 +82,26 @@
     }
   });
 })();
+
+// Bracket score entry: a match saves itself once both boxes are filled.
+(function () {
+  var forms = document.querySelectorAll("form.mform");
+  if (!forms.length) return;
+  Array.prototype.forEach.call(forms, function (form) {
+    form.addEventListener("input", function (e) {
+      if (!e.target.classList.contains("bscore")) return;
+      var cleaned = e.target.value.replace(/[^0-9]/g, "").slice(0, 2);
+      if (cleaned !== e.target.value) e.target.value = cleaned;
+    });
+    form.addEventListener("change", function () {
+      var boxes = form.querySelectorAll("input.bscore");
+      var a = boxes[0].value, b = boxes[1].value;
+      if (a === "" || b === "") return;
+      if (Number(a) > 13 || Number(b) > 13 || a === b) {
+        form.closest(".match").style.borderColor = "#cf222e";
+        return;
+      }
+      form.submit();
+    });
+  });
+})();

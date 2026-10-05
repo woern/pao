@@ -146,6 +146,25 @@ class TestScores(unittest.TestCase):
         self.assertEqual(model.round_score_summary(t, rnd)["ok"], 1)
 
 
+class TestTestScores(unittest.TestCase):
+
+    def test_fills_only_unscored_games_with_valid_results(self):
+        random.seed(2)
+        t = build(8, courts=(1, 8))
+        scheduler.draw_round(t)
+        g = model.games_in_round(t, 0)[0]
+        model.set_game_score(t, 0, g.tid, g.oid, 13, 2)
+        filled = model.fill_test_scores(t, 0)
+        self.assertEqual(filled, 3)
+        self.assertEqual(model.game_scores(t, 0, g), (13, 2))     # kept
+        for game in model.games_in_round(t, 0):
+            a, b = model.game_scores(t, 0, game)
+            self.assertEqual(model.game_status(a, b), "ok")
+            self.assertEqual(max(a, b), 13)
+            self.assertLessEqual(min(a, b), 12)
+        self.assertEqual(model.fill_test_scores(t, 0), 0)
+
+
 class TestScheduler(unittest.TestCase):
 
     def byes(self, t):
@@ -226,6 +245,15 @@ class TestScheduler(unittest.TestCase):
                 self.assertEqual(len(set(team["games"])), 4, "rematch for %d" % tid)
                 for oid in team["games"]:
                     self.assertNotEqual(team["group"], t["teams"][oid]["group"])
+
+    def test_ungrouped_teams_may_meet_each_other(self):
+        # Two teams with the placeholder group "-" are not a group.
+        random.seed(0)
+        t = build(0, courts=(1, 4))
+        model.add_team(t, 1, "-", "A")
+        model.add_team(t, 2, "-", "B")
+        scheduler.draw_round(t)
+        self.assertEqual(t["teams"][1]["games"], [2])
 
     def test_hard_errors(self):
         with self.assertRaises(scheduler.DrawError):
@@ -359,8 +387,9 @@ class TestTeamsIO(unittest.TestCase):
         text = "n,g,name\n1,FL,Alpha\nx,GA,Bravo\n3,TX,\n4\n\n5,LA,Echo\n"
         rows, skipped = teamsio.parse_teams(text)
         self.assertEqual([r[0] for r in rows], [1, 5])
-        self.assertEqual(skipped, [3, 4])   # bad number; no name. "4" alone is an empty row.
+        self.assertEqual([s[0] for s in skipped], [3, 4])   # bad number; no name. "4" alone is an empty row.
         self.assertIn("Skipped 2", teamsio.format_skipped(skipped))
+        self.assertIn("line 4: team 3 has no name", teamsio.format_skipped(skipped))
 
     def test_bom_is_stripped(self):
         rows, _ = teamsio.parse_teams("﻿1,FL,Alpha\n")
@@ -369,8 +398,11 @@ class TestTeamsIO(unittest.TestCase):
     def test_empty_rows_ignored_and_half_empty_rows_reported(self):
         text = "1,FL,Alpha\n2,,/\n3,,\n\n4,,Delta\n5,GA,/\n6,GA,Foxtrot\n"
         rows, skipped = teamsio.parse_teams(text)
-        self.assertEqual([r[0] for r in rows], [1, 6])
-        self.assertEqual(skipped, [5, 6])   # no group; no name
+        self.assertEqual([r[0] for r in rows], [1, 4, 6])
+        self.assertEqual(rows[1], (4, "-", "Delta"))          # no group: kept, flagged
+        self.assertEqual(teamsio.ungrouped(rows), [(4, "Delta")])
+        self.assertIn("4 Delta", teamsio.format_ungrouped(rows))
+        self.assertEqual([s[0] for s in skipped], [6])         # no name
         self.assertTrue(teamsio.is_blank(" / "))
         self.assertFalse(teamsio.is_blank("Smith/Jones"))
 

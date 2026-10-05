@@ -461,6 +461,25 @@ def record_bye_scores(tournament, rnd):
             record_walkover(tournament, rnd, game.oid, game.tid)
 
 
+def fill_test_scores(tournament, rnd, rng=None):
+    """Give every game in `rnd` without a complete score a random result.
+
+    For testing the app before tournament day: the winner gets 13, the
+    loser 0 to 12, winner chosen at random. Games already scored are left
+    alone. Returns how many games were filled.
+    """
+    import random as _random
+    rng = rng or _random
+    filled = 0
+    for game in games_in_round(tournament, rnd):
+        if game_status(*game_scores(tournament, rnd, game)) == "ok":
+            continue
+        winner, loser = (game.tid, game.oid) if rng.random() < 0.5 else (game.oid, game.tid)
+        set_game_score(tournament, rnd, winner, loser, MAX_SCORE, rng.randint(0, MAX_SCORE - 1))
+        filled += 1
+    return filled
+
+
 def round_score_summary(tournament, rnd):
     """Counts of games by status for a round."""
     summary = {"games": 0, "missing": 0, "partial": 0, "tied": 0, "ok": 0}

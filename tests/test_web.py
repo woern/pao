@@ -13,6 +13,7 @@ import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from paolib import model  # noqa: E402
 from paoweb import pages  # noqa: E402
 from paoweb.server import App, serve  # noqa: E402
 
@@ -45,7 +46,7 @@ class WebCase(unittest.TestCase):
         headers = {}
         data = None
         if form is not None:
-            data = urllib.parse.urlencode(form).encode()
+            data = urllib.parse.urlencode(form, doseq=False).encode()
             headers["Content-Type"] = "application/x-www-form-urlencoded"
         elif body is not None:
             data = json.dumps(body).encode()
@@ -65,6 +66,15 @@ class WebCase(unittest.TestCase):
         status, location, _ = self.request("POST", "/teams/import", form={"text": TEAMS})
         self.assertEqual(status, 303)
         self.assertIn("Imported+12+teams", location)
+        self.assertIn("now+has+12+teams", location)
+
+        # A team without a group is imported, flagged, and shown on the Teams page.
+        status, location, _ = self.request("POST", "/teams/import", form={"text": "99,,Lonely/Team\n"})
+        self.assertIn("have+no+group", location)
+        status, _, text = self.request("GET", "/teams")
+        self.assertIn("no group", text)
+        self.assertIn("Lonely/Team", text)
+        status, _, _ = self.request("POST", "/teams/99/remove", form={})
 
         status, location, _ = self.request("POST", "/setup", form={"a_from": 1, "a_to": 8, "b_from": 0, "b_to": 0})
         self.assertEqual(status, 303)
@@ -102,6 +112,15 @@ class WebCase(unittest.TestCase):
         status, location, _ = self.request("POST", "/rounds/1/walkover", form={"winner": tid2, "loser": opp2})
         self.assertEqual(status, 303)
         self.assertEqual(self.app.tournament["scores"][0][tid2], 13)
+
+        status, _, text = self.request("GET", "/rounds/2/scores")
+        self.assertIn("Fill with test scores", text)
+        self.assertIn("TESTING ONLY", text)
+        status, location, _ = self.request("POST", "/rounds/2/testscores", form={})
+        self.assertIn("Filled+6+game", location)
+        self.assertEqual(model.round_score_summary(self.app.tournament, 1)["ok"], 6)
+        status, _, text = self.request("GET", "/rounds/2/scores")
+        self.assertNotIn("Fill with test scores", text)   # nothing left to fill
 
         # Round 1 stays editable after round 2 is drawn, and the page links both rounds.
         status, _, text = self.request("GET", "/rounds/1/scores")
@@ -174,6 +193,80 @@ class WebCase(unittest.TestCase):
             status, _, text = self.request("GET", "/")
             self.assertEqual(status, 200)
             self.assertIn("Switch tournament", text)
+        finally:
+            self.port = saved_port
+            server.shutdown()
+            server.server_close()
+
+    def test_day_two_flow(self):
+        import random
+        from paolib import brackets, model, scheduler, standings
+        app = App("daytwo")
+        pages.register(app)
+        server = serve(app, port=0, quiet=True)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            saved_port, self.port = self.port, server.server_address[1]
+            t = app.tournament
+            random.seed(5)
+            t["court_map"]["a"] = (1, 40)
+            for i in range(1, 25):
+                model.add_team(t, i, "G%d" % (i % 6), "Team%d" % i)
+            rnd = scheduler.draw_round(t)
+
+            status, _, text = self.request("GET", "/day2")
+            self.assertEqual(status, 200)
+            self.assertIn("Day 1 is not finished", text)
+
+            for g in model.games_in_round(t, rnd):
+                lo, hi = sorted((g.tid, g.oid))
+                model.set_game_score(t, rnd, lo, hi, 13, lo % 12)
+            for tie in standings.unresolved_ties(t):
+                standings.set_tiebreak(t, [r["tid"] for r in tie])
+
+            status, _, text = self.request("GET", "/day2?groups=2&size=16&size=8")
+            self.assertEqual(status, 200)
+            self.assertIn("1 - 16", text)
+            self.assertIn("17 - 24", text)
+
+            status, location, _ = self.request("POST", "/day2/groups", form=[("size", 16), ("size", 8), ("cons_A", "on")])
+            self.assertEqual(status, 303)
+            self.assertIn("Created+2+groups", location)
+            groups = brackets.day2(t)["groups"]
+            self.assertEqual([len(g["teams"]) for g in groups], [16, 8])
+            self.assertTrue(groups[0]["consolation"])
+            self.assertFalse(groups[1]["consolation"])
+
+            status, _, text = self.request("GET", "/day2/A")
+            self.assertEqual(status, 200)
+            self.assertIn("1/8 Finals", text)
+            self.assertIn("consolation", text)
+            first = brackets.main_bracket(t, groups[0])[0][0]
+            self.assertIsNotNone(first["court"])
+
+            status, location, _ = self.request("POST", "/day2/match/%s/score" % first["id"], form={"sa": 13, "sb": 4})
+            self.assertEqual(status, 303)
+            self.assertIn("wins", location)
+            self.assertTrue(location.endswith("#" + first["id"]), location)   # anchor after the query
+            self.assertEqual(brackets.find_match(t, first["id"])["status"], "done")
+            status, location, _ = self.request("POST", "/day2/match/%s/score" % first["id"], form={"sa": 6, "sb": 6})
+            self.assertIn("cannot+be+tied", location)
+
+            second = brackets.main_bracket(t, groups[0])[0][1]
+            status, location, _ = self.request("POST", "/day2/match/%s/walkover" % second["id"], form={"winner": second["b"]["tid"]})
+            self.assertEqual(brackets.find_match(t, second["id"])["sb"], 13)
+
+            status, location, _ = self.request("POST", "/day2/A/main/0/shuffle", form={})
+            self.assertIn("Courts+redrawn", location)
+
+            for path in ("/print/day2/A", "/print/day2/B", "/print/day2/groups"):
+                status, _, text = self.request("GET", path)
+                self.assertEqual(status, 200, path)
+
+            status, _, text = self.request("GET", "/day2")
+            self.assertIn("Group A", text)
+            status, location, _ = self.request("POST", "/day2/groups/delete", form={})
+            self.assertFalse(brackets.has_groups(t))
         finally:
             self.port = saved_port
             server.shutdown()

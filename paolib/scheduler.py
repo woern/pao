@@ -34,9 +34,12 @@ class DrawFailed(DrawError):
 
 
 def build_groups(tournament):
+    """{group: {team numbers}}; the placeholder "-" restricts nobody."""
     groups = {}
     for tid, team in tournament["teams"].items():
-        groups.setdefault(team["group"], set()).add(tid)
+        members = groups.setdefault(team["group"], set())
+        if team["group"] != "-":
+            members.add(tid)
     return groups
 
 
